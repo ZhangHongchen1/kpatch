@@ -142,6 +142,8 @@ unsigned int absolute_rela_type(struct kpatch_elf *kelf)
 		return R_X86_64_64;
 	case S390:
 		return R_390_64;
+	case LOONGARCH:
+		return R_LARCH_64;
 	default:
 		ERROR("unsupported arch");
 	}
@@ -206,6 +208,7 @@ long rela_target_offset(struct kpatch_elf *kelf, struct section *relasec,
 
 	switch(kelf->arch) {
 	case PPC64:
+	case LOONGARCH:
 		add_off = 0;
 		break;
 	case X86_64:
@@ -261,6 +264,7 @@ unsigned int insn_length(struct kpatch_elf *kelf, void *addr)
 		return decoded_insn.length;
 
 	case PPC64:
+	case LOONGARCH:
 		return 4;
 
 	case S390:
@@ -322,14 +326,31 @@ static void kpatch_create_rela_list(struct kpatch_elf *kelf,
 		rela->sym = find_symbol_by_index(&kelf->symbols, symndx);
 		if (!rela->sym)
 			ERROR("could not find rela entry symbol\n");
+
 		if (rela->sym->sec &&
 		    (rela->sym->sec->sh.sh_flags & SHF_STRINGS)) {
-			rela->string = rela->sym->sec->data->d_buf +
+			if (kelf->arch == LOONGARCH) {
+				rela->string = rela->sym->sec->data->d_buf +
+					       rela->sym->sym.st_value;
+			} else {
+				rela->string = rela->sym->sec->data->d_buf +
 				       rela->sym->sym.st_value +
 				       rela_target_offset(kelf, relasec, rela);
+			}
 			if (!rela->string)
 				ERROR("could not lookup rela string for %s+%ld",
 				      rela->sym->name, rela->addend);
+		}
+
+		if (kelf->arch == LOONGARCH) {
+			/* old LoongArch compiler create many local lables
+			 * like .LASF0, replace them with section symbol.
+			 */
+			if ((rela->sym->type == STT_NOTYPE) &&
+				(rela->sym->bind == STB_LOCAL) && rela->sym->sec) {
+				rela->addend += rela->sym->sym.st_value;
+				rela->sym = rela->sym->sec->secsym;
+			}
 		}
 
 		if (skip)
@@ -559,6 +580,7 @@ struct kpatch_elf *kpatch_elf_open(const char *name)
 	int fd;
 	struct kpatch_elf *kelf;
 	struct section *relasec;
+	struct symbol *sym, *safesym;
 	GElf_Ehdr ehdr;
 
 	fd = open(name, O_RDONLY);
@@ -593,6 +615,9 @@ struct kpatch_elf *kpatch_elf_open(const char *name)
 	case EM_S390:
 		kelf->arch = S390;
 		break;
+	case EM_LOONGARCH:
+		kelf->arch = LOONGARCH;
+		break;
 	default:
 		ERROR("Unsupported target architecture");
 	}
@@ -606,6 +631,18 @@ struct kpatch_elf *kpatch_elf_open(const char *name)
 			continue;
 		INIT_LIST_HEAD(&relasec->relas);
 		kpatch_create_rela_list(kelf, relasec);
+	}
+
+	if (kelf->arch == LOONGARCH) {
+		/* old LoongArch compiler create many local lables
+		 * like .LASF0, remove them, because we have changed the
+		 * related rela to use section symbol.
+		 */
+		list_for_each_entry_safe(sym, safesym, &kelf->symbols, list) {
+			if ((sym->type == STT_NOTYPE) &&
+				(sym->bind == STB_LOCAL) && sym->sec)
+				list_del(&sym->list);
+		}
 	}
 
 	return kelf;
