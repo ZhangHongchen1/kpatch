@@ -3422,6 +3422,122 @@ static bool need_klp_reloc(struct kpatch_elf *kelf, struct lookup_table *table,
 	return false;
 }
 
+static bool is_short_call(void *ptr)
+{
+	unsigned int *insn = (unsigned int *)ptr;
+
+	/* b symbol */
+	if ((*insn & 0xfc000000) == 0x50000000)
+		return true;
+
+	/* bl symbol */
+	if ((*insn & 0xfc000000) == 0x54000000)
+		return true;
+
+	return false;
+}
+
+static void kpatch_create_trampoline_sections(struct kpatch_elf *kelf)
+{
+	int nr;
+	struct rela *rela, *rela2;
+	struct section *sec, *ktramp_sec;
+	unsigned int ktramp_item[8] = { 0x14000014,/* lu12i.w t8, 0    */
+					0x03800294,/* ori     t8,t8, 0 */
+					0x16000014,/* lu32i.d t8,t8, 0 */
+					0x03000294,/* lu52i.d t8,t8, 0 */
+					0x4c000280,/* jirl    r0,t8, 0 */
+					0x002a0000,/* break   0        */
+					0x002a0000,/* break   0        */
+					0x002a0000,/* break   0        */
+					};
+	unsigned int *ktramps;
+	int tramp_nr = 0;
+	struct symbol *tramp_sym, *null_sym;
+
+	/* create .text.kpatch_trampoline text/rela section pair */
+	ktramp_sec = create_section_pair(kelf, ".text.kpatch_trampoline", 32, tramp_nr);
+	ktramp_sec->sh.sh_flags |= SHF_EXECINSTR;
+
+	/* create .text.kpatch_trampoline section symbol */
+	ALLOC_LINK(tramp_sym, &kelf->symbols);
+	tramp_sym->sec = ktramp_sec;
+	tramp_sym->sym.st_info = GELF_ST_INFO(STB_LOCAL, STT_SECTION);
+	tramp_sym->type = STT_SECTION;
+	tramp_sym->bind = STB_LOCAL;
+	tramp_sym->name = ktramp_sec->name;
+	ktramp_sec->secsym = tramp_sym;
+
+	null_sym = find_symbol_by_index(&kelf->symbols, 0);
+
+	ktramp_sec->include = 1;
+	ktramp_sec->rela->include = 1;
+
+	list_for_each_entry(sec, &kelf->sections, list) {
+		if (!is_rela_section(sec) || !(sec->base->sh.sh_flags & SHF_EXECINSTR))
+			continue;
+		if (!strcmp(sec->name, ".rela.text.kpatch_trampoline"))
+			continue;
+		list_for_each_entry(rela, &sec->relas, list) {
+
+			if (rela->sym->type != STT_FUNC)
+				continue;
+			if (rela->sym->sec)
+				continue;
+			if (!is_short_call(sec->base->data->d_buf + rela->offset))
+				continue;
+
+			/* add trampoline rela */
+#define LA_ADD_RELA(rsym, rtype, raddend, roffset) \
+			do { \
+				ALLOC_LINK(rela2, &ktramp_sec->rela->relas); \
+				rela2->sym = rsym; \
+				rela2->type = rtype; \
+				rela2->addend = raddend; \
+				rela2->offset = roffset; \
+			} while (0)
+
+			LA_ADD_RELA(rela->sym,	R_LARCH_MARK_LA,		0,	tramp_nr * 32);
+			LA_ADD_RELA(rela->sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0,	tramp_nr * 32);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0x20,	tramp_nr * 32);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_SL,			0,	tramp_nr * 32);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0x2c,	tramp_nr * 32);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_SR,			0,	tramp_nr * 32);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_POP_32_S_5_20,	0,	tramp_nr * 32);
+
+			LA_ADD_RELA(rela->sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0,	tramp_nr * 32 + 4);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0xfff,	tramp_nr * 32 + 4);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_AND,		0,	tramp_nr * 32 + 4);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_POP_32_U_10_12,	0,	tramp_nr * 32 + 4);
+
+			LA_ADD_RELA(rela->sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0,	tramp_nr * 32 + 8);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0xc,	tramp_nr * 32 + 8);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_SL,			0,	tramp_nr * 32 + 8);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0x2c,	tramp_nr * 32 + 8);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_SR,			0,	tramp_nr * 32 + 8);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_POP_32_S_5_20,	0,	tramp_nr * 32 + 8);
+
+			LA_ADD_RELA(rela->sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0,	tramp_nr * 32 + 12);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_PUSH_ABSOLUTE,	0x34,	tramp_nr * 32 + 12);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_SR,			0,	tramp_nr * 32 + 12);
+			LA_ADD_RELA(null_sym,	R_LARCH_SOP_POP_32_S_10_12,	0,	tramp_nr * 32 + 12);
+
+			/* redirect to trampoline */
+			log_debug("redirect [%s + %#x]:(%s + %#lx) to (%s + %#x)\n",
+					sec->base->name, rela->offset, rela->sym->name, rela->addend,
+					ktramp_sec->name, tramp_nr * 32);
+			rela->sym = tramp_sym;
+			rela->addend = tramp_nr * 32;
+			tramp_nr++;
+		}
+	}
+
+	ktramps = ktramp_sec->data->d_buf = malloc(tramp_nr * 32);
+	for (nr = 0; nr < tramp_nr; nr++)
+		memcpy((void *)ktramps + nr * 32, ktramp_item, 32);
+	ktramp_sec->data->d_size = tramp_nr * 32;
+}
+
 /*
  * kpatch_create_intermediate_sections()
  *
@@ -3484,7 +3600,7 @@ static void kpatch_create_intermediate_sections(struct kpatch_elf *kelf,
 				 * loongarch use stack based rela,mark the following rela
 				 * which at the same offset.
 				 */
-				list_for_each_entry_continue(rela, &sec->relas, list) {
+				list_for_each_entry_continue(rela, &relasec->relas, list) {
 					if (rela->offset != list_prev_entry(rela, list)->offset)
 						break;
 					if (list_prev_entry(rela, list)->need_klp_reloc) {
@@ -4210,6 +4326,9 @@ int main(int argc, char *argv[])
 	/* create strings, patches, and klp relocation sections */
 	kpatch_create_strings_elements(kelf_out);
 	kpatch_create_patches_sections(kelf_out, lookup, parent_name);
+	if (kelf_out->arch == LOONGARCH) {
+		kpatch_create_trampoline_sections(kelf_out);
+	}
 	kpatch_create_intermediate_sections(kelf_out, lookup, parent_name, patch_name);
 	kpatch_create_kpatch_arch_section(kelf_out, parent_name);
 	kpatch_create_callbacks_objname_rela(kelf_out, parent_name);
