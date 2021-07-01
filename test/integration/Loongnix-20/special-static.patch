@@ -1,0 +1,23 @@
+diff --git a/kernel/fork.c b/kernel/fork.c
+index cf535b9d5db7..7fac3df21d90 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1478,10 +1478,18 @@ static void posix_cpu_timers_init_group(struct signal_struct *sig)
+ static inline void posix_cpu_timers_init_group(struct signal_struct *sig) { }
+ #endif
+ 
++void kpatch_foo(void)
++{
++	if (!jiffies)
++		printk("kpatch copy signal\n");
++}
++
+ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
+ {
+ 	struct signal_struct *sig;
+ 
++	kpatch_foo();
++
+ 	if (clone_flags & CLONE_THREAD)
+ 		return 0;
+ 

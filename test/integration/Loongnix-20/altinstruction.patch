@@ -1,0 +1,47 @@
+From fd030fd7a6f3d102b9c0765d1f98978dbaad9657 Mon Sep 17 00:00:00 2001
+From: Hongchen Zhang <zhanghongchen@loongson.cn>
+Date: Thu, 1 Jul 2021 14:57:17 +0800
+Subject: [PATCH] altinstruction
+
+Signed-off-by: Hongchen Zhang <zhanghongchen@loongson.cn>
+---
+ fs/proc/version.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/fs/proc/version.c b/fs/proc/version.c
+index b449f186577f..1a78404e863c 100644
+--- a/fs/proc/version.c
++++ b/fs/proc/version.c
+@@ -5,9 +5,29 @@
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
+ #include <linux/utsname.h>
++#include <asm/alternative.h>
++
++int kpatch_test_func(void)
++{
++	printk("kpatch: cpu not support csripi\n");
++	return 0;
++}
++
++int kpatch_test_func_csripi(void)
++{
++	printk("kpatch: cpu support csripi\n");
++	return 1;
++}
++
++void kpatch_test(void)
++{
++	__asm__ __volatile__ (ALTERNATIVE("b kpatch_test_func", "b kpatch_test_func_csripi", LOONGARCH_CPU_CSRIPI)
++				: : : "memory");
++}
+ 
+ static int version_proc_show(struct seq_file *m, void *v)
+ {
++	kpatch_test();
+ 	seq_printf(m, linux_proc_banner,
+ 		utsname()->sysname,
+ 		utsname()->release,
+-- 
+2.20.1
+

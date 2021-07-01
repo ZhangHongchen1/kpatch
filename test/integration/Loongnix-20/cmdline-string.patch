@@ -1,0 +1,27 @@
+From 2a8d6f81a9a20e0d2ca953d37d567b6f66488351 Mon Sep 17 00:00:00 2001
+From: Hongchen Zhang <zhanghongchen@loongson.cn>
+Date: Fri, 4 Nov 2022 10:27:51 +0800
+Subject: [PATCH] cmdline string
+
+Signed-off-by: Hongchen Zhang <zhanghongchen@loongson.cn>
+---
+ fs/proc/cmdline.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
+index fa762c5fbcb2..bd6602769a93 100644
+--- a/fs/proc/cmdline.c
++++ b/fs/proc/cmdline.c
+@@ -6,8 +6,7 @@
+ 
+ static int cmdline_proc_show(struct seq_file *m, void *v)
+ {
+-	seq_puts(m, saved_command_line);
+-	seq_putc(m, '\n');
++	seq_printf(m, "%s kpatch=1\n", saved_command_line);
+ 	return 0;
+ }
+ 
+-- 
+2.27.0
+

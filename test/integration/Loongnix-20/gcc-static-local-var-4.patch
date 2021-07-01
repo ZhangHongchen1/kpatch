@@ -1,0 +1,24 @@
+diff --git a/fs/aio.c b/fs/aio.c
+index 413ec289bfa1..72a27e797d0f 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -276,11 +276,18 @@ static int __init aio_setup(void)
+ }
+ __initcall(aio_setup);
+ 
+-static void put_aio_ring_file(struct kioctx *ctx)
++void kpatch_aio_foo(void)
++{
++	if (!jiffies)
++		printk("kpatch aio foo\n");
++}
++
++static __always_inline void put_aio_ring_file(struct kioctx *ctx)
+ {
+ 	struct file *aio_ring_file = ctx->aio_ring_file;
+ 	struct address_space *i_mapping;
+ 
++	kpatch_aio_foo();
+ 	if (aio_ring_file) {
+ 		truncate_setsize(file_inode(aio_ring_file), 0);
+ 
