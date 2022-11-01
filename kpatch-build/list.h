@@ -181,6 +181,15 @@ static inline void list_replace(struct list_head *old,
 	list_entry((pos)->member.next, typeof(*(pos)), member)
 
 /**
+ * list_prev_entry - get the prev element in list
+ * @pos:	the type * to cursor
+ * @member:	the name of the list_head within the struct.
+ */
+#define list_prev_entry(pos, member) \
+	list_entry((pos)->member.prev, typeof(*(pos)), member)
+
+
+/**
  * list_for_each_entry	-	iterate over list of given type
  * @pos:	the type * to use as a loop counter.
  * @head:	the head for your list.
