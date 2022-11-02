@@ -3422,6 +3422,136 @@ static bool need_klp_reloc(struct kpatch_elf *kelf, struct lookup_table *table,
 	return false;
 }
 
+static bool is_la_pcrel(void *ptr)
+{
+	unsigned int *insn = ptr;
+	int rd;
+
+	/* pcaddu12i rd, si20 */
+	if ((*insn & 0xfe000000) != 0x1c000000)
+		return false;
+
+	rd = *insn & 0x1f;
+
+	/* addi.d rd, rd, si20 */
+	if ((*(insn + 1) & 0xffc003ff) != (0x02c00000U | rd | (rd << 5)))
+		return false;
+
+	return true;
+}
+
+static void la_pcrel_to_la_got(void *ptr)
+{
+	unsigned int *insn = ptr;
+	int rd;
+
+	rd = *insn & 0x1f;
+
+	/* ld.d rd, rd, si20 */
+	*(insn + 1) = 0x28c00000 | rd | (rd << 5);
+}
+
+static void kpatch_create_got_sections(struct kpatch_elf *kelf)
+{
+	struct rela *rela, *rela2, *prev_rela;
+	struct section *sec, *kgot_sec;
+	unsigned int *kgots;
+	int kgot_nr = 0;
+	struct symbol *kgot_sym, *null_sym;
+	unsigned int offset;
+	void *ndata_buf;
+
+	kgot_sec = create_section_pair(kelf, ".kpatch_got", 8, 0);
+
+	ALLOC_LINK(kgot_sym, &kelf->symbols);
+	kgot_sym->sec = kgot_sec;
+	kgot_sym->sym.st_info = GELF_ST_INFO(STB_LOCAL, STT_SECTION);
+	kgot_sym->type = STT_SECTION;
+	kgot_sym->bind = STB_LOCAL;
+	kgot_sym->name = kgot_sec->name;
+	kgot_sec->secsym = kgot_sym;
+
+	null_sym = find_symbol_by_index(&kelf->symbols, 0);
+
+	kgot_sec->include = 1;
+	kgot_sec->rela->include = 1;
+
+	list_for_each_entry(sec, &kelf->sections, list) {
+		if (!is_rela_section(sec) || !(sec->base->sh.sh_flags & SHF_EXECINSTR))
+			continue;
+		ndata_buf = NULL;
+		list_for_each_entry(rela, &sec->relas, list) {
+			if (rela->sym->sec)
+				continue;
+			if (rela->type != R_LARCH_SOP_PUSH_PCREL)
+				continue;
+			if (!is_la_pcrel(sec->base->data->d_buf + rela->offset))
+				continue;
+			if (ndata_buf == NULL) {
+				ndata_buf = malloc(sec->base->data->d_size + 4);
+				ndata_buf = ndata_buf + 4 - ((unsigned long)ndata_buf % 4);
+				memcpy(ndata_buf, sec->base->data->d_buf, sec->base->data->d_size);
+				sec->base->data->d_buf = ndata_buf;
+			}
+			la_pcrel_to_la_got(sec->base->data->d_buf + rela->offset);
+
+			ALLOC_LINK(rela2, &kgot_sec->rela->relas);
+			rela2->sym = rela->sym;
+			rela2->type = R_LARCH_64;
+			rela2->addend = 0;
+			rela2->offset = kgot_nr * 8;
+
+			/* remove old rela for la.pcrel */
+			prev_rela = list_entry(rela->list.prev, struct rela, list);
+			offset = rela->offset;
+			while ((rela->offset >= offset) && (rela->offset <= offset + 4)) {
+				list_del(&rela->list);
+				rela = list_next_entry(prev_rela, list);
+			}
+			/* add rela for la.got */
+
+#define LA_ADD_GOT_RELA(rsym, rtype, raddend, roffset) \
+			do { \
+				ALLOC_LINK(rela2, &rela->list); \
+				rela2->sym = rsym; \
+				rela2->type = rtype; \
+				rela2->addend = raddend; \
+				rela2->offset = roffset; \
+			} while (0)
+
+			LA_ADD_GOT_RELA(kgot_sym, R_LARCH_SOP_PUSH_PCREL,	0x800,		offset);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_PUSH_ABSOLUTE, 	kgot_nr * 8, 	offset);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_ADD,		0,		offset);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_PUSH_ABSOLUTE,	0xc,		offset);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_SR,		0,		offset);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_POP_32_S_5_20,	0,		offset);
+
+			LA_ADD_GOT_RELA(kgot_sym, R_LARCH_SOP_PUSH_PCREL,	0x4,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_PUSH_ABSOLUTE, 	kgot_nr * 8, 	offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_ADD,		0,		offset + 4);
+			LA_ADD_GOT_RELA(kgot_sym, R_LARCH_SOP_PUSH_PCREL,	0x804,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_PUSH_ABSOLUTE, 	kgot_nr * 8, 	offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_ADD,		0,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_PUSH_ABSOLUTE,	0xc,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_SR,		0,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_PUSH_ABSOLUTE,	0xc,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_SL,		0,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_SUB,		0,		offset + 4);
+			LA_ADD_GOT_RELA(null_sym, R_LARCH_SOP_POP_32_S_10_12,	0,		offset + 4);
+
+			rela = list_entry(rela->list.prev, struct rela, list);
+
+			log_debug("add kpatch got for [%s + %#lx]: index:%d\n",
+						rela->sym->name, rela->addend, kgot_nr);
+			kgot_nr++;
+		}
+	}
+
+	kgots = kgot_sec->data->d_buf = malloc(kgot_nr * 8);
+	memset(kgots, 0, kgot_nr * 8);
+	kgot_sec->data->d_size = kgot_nr * 8;
+}
+
 static bool is_short_call(void *ptr)
 {
 	unsigned int *insn = (unsigned int *)ptr;
@@ -4327,6 +4457,7 @@ int main(int argc, char *argv[])
 	kpatch_create_strings_elements(kelf_out);
 	kpatch_create_patches_sections(kelf_out, lookup, parent_name);
 	if (kelf_out->arch == LOONGARCH) {
+		kpatch_create_got_sections(kelf_out);
 		kpatch_create_trampoline_sections(kelf_out);
 	}
 	kpatch_create_intermediate_sections(kelf_out, lookup, parent_name, patch_name);
