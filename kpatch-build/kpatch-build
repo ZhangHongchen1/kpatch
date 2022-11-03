@@ -877,7 +877,7 @@ if [[ "$DISTRO" = fedora ]] || [[ "$DISTRO" = rhel ]] || [[ "$DISTRO" = ol ]] ||
 
 	export PATH="/usr/lib64/ccache:$PATH"
 
-elif [[ "$DISTRO" = ubuntu ]] || [[ "$DISTRO" = debian ]]; then
+elif [[ "$DISTRO" = ubuntu ]] || [[ "$DISTRO" = debian ]] || [[ "$DISTRO" = loongnix-server ]] || [[ "$DISTRO" = Loongnix ]]; then
 	[[ -z "$VMLINUX" ]] && VMLINUX="/usr/lib/debug/boot/vmlinux-$ARCHVERSION"
 
 	if [[ "$DISTRO" = ubuntu ]]; then
@@ -1048,6 +1048,9 @@ else
 		# upstream SUBLEVEL; they are always at SUBLEVEL 0
 		sed -i "s/^SUBLEVEL.*/${sublevel}/" "$KERNEL_SRCDIR/Makefile" || die
 		echo "$ARCHVERSION" > "$VERSIONFILE" || die
+	elif [[ "$DISTRO" = Loongnix ]] || [[ "$DISTRO" = "loongnix-server" ]]; then
+		#TODO download source code
+		echo TODO: download source code for Loongnix
 	else
 		die "Unsupported distribution"
 	fi
