@@ -2750,10 +2750,27 @@ static void kpatch_regenerate_orc_sections(struct kpatch_elf *kelf)
 		       orc_entry_size);
 
 		/* move ip rela */
-		list_del(&rela->list);
-		list_add_tail(&rela->list, &newrelas);
-		rela->offset = dest_idx * ORC_IP_PTR_SIZE;
-		rela->sym->include = 1;
+		if (kelf->arch == LOONGARCH) {
+			unsigned int offset = rela->offset;
+
+			rela = list_entry(rela->list.prev, typeof(*rela), list);
+			list_for_each_entry_continue(rela, &ip_sec->rela->relas, list) {
+				if (rela->offset != offset)
+					break;
+				safe = list_next_entry(rela, list);
+				list_del(&rela->list);
+				list_add_tail(&rela->list, &newrelas);
+				rela->offset = dest_idx * ORC_IP_PTR_SIZE;
+				rela->sym->include = 1;
+
+				rela = list_entry(safe->list.prev, typeof(*rela), list);
+			}
+		} else {
+			list_del(&rela->list);
+			list_add_tail(&rela->list, &newrelas);
+			rela->offset = dest_idx * ORC_IP_PTR_SIZE;
+			rela->sym->include = 1;
+		}
 
 		dest_idx++;
 next:
