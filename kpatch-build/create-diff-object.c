@@ -1547,7 +1547,6 @@ static void kpatch_replace_sections_syms(struct kpatch_elf *kelf)
 	struct rela *rela;
 	struct symbol *sym;
 	long target_off;
-	bool found = false;
 
 	log_debug("\n");
 
@@ -1565,18 +1564,6 @@ static void kpatch_replace_sections_syms(struct kpatch_elf *kelf)
 			 * replace section symbols.
 			 */
 			if (is_ubsan_sec(rela->sym->name))
-				continue;
-
-			/*
-			 * These sections don't have symbols associated with
-			 * them:
-			 */
-			if (!strcmp(rela->sym->name, ".toc") ||
-			    !strcmp(rela->sym->name, ".fixup") ||
-			    !strcmp(rela->sym->name, ".altinstr_replacement") ||
-			    !strcmp(rela->sym->name, ".altinstr_aux") ||
-			    !strcmp(rela->sym->name, ".text..refcount") ||
-			    !strncmp(rela->sym->name, "__ftr_alt_", 10))
 				continue;
 
 			/*
@@ -1616,9 +1603,9 @@ static void kpatch_replace_sections_syms(struct kpatch_elf *kelf)
 				start = sym->sym.st_value;
 				end = sym->sym.st_value + sym->sym.st_size;
 
-				if (is_text_section(relasec->base) &&
+				if (rela->type == R_X86_64_32S &&
+				    is_text_section(relasec->base) &&
 				    !is_text_section(sym->sec) &&
-				    rela->type == R_X86_64_32S &&
 				    rela->addend == (long)sym->sec->sh.sh_size &&
 				    end == (long)sym->sec->sh.sh_size) {
 
@@ -1667,17 +1654,10 @@ static void kpatch_replace_sections_syms(struct kpatch_elf *kelf)
 					  relasec->name,
 					  rela->sym->name, rela->addend,
 					  sym->name, rela->addend - start);
-				found = true;
 
 				rela->sym = sym;
 				rela->addend -= start;
 				break;
-			}
-
-			if (!found && !is_string_literal_section(rela->sym->sec) &&
-			    strncmp(rela->sym->name, ".rodata", 7)) {
-				ERROR("%s+0x%x: can't find replacement symbol for %s+%ld reference",
-				      relasec->base->name, rela->offset, rela->sym->name, rela->addend);
 			}
 		}
 	}
