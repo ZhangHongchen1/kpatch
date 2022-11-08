@@ -49,4 +49,4 @@ uninstall:
 	$(RM) $(BINDIR)/kpatch-build
 
 clean:
-	$(RM) $(TARGETS) *.{o,d} insn/*.{o,d} gcc-plugins/*.{so,d}
+	$(RM) $(TARGETS) *.o *.d insn/*.o insn/*.d gcc-plugins/*.so gcc-plugins/*.d
